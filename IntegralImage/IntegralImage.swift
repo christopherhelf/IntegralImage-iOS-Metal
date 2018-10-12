@@ -20,7 +20,8 @@ class IntegralImage : MPSKernel {
     // The inclusive variable, automatically adjusts the respective buffer
     var inclusive : Bool! {
         didSet {
-            self.inclusiveBuffer = device.newBuffer(withBytes: &inclusive, length: sizeof(Bool), options: [])
+            let numBytes = MemoryLayout<Bool>.size
+            self.inclusiveBuffer = device.makeBuffer(bytes: &inclusive, length: numBytes, options: [])
         }
     }
     var inclusiveBuffer: MTLBuffer! = nil
@@ -74,6 +75,10 @@ class IntegralImage : MPSKernel {
         createIntermediaryTextures()
     }
     
+    required convenience init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
     // Convenience function
     func setInclusive(inclusive: Bool) {
         self.inclusive = inclusive
@@ -124,7 +129,7 @@ class IntegralImage : MPSKernel {
         let scanGrid = MTLSizeMake(requiredBlocks, input.height, 1)
         let scanBlock = MTLSizeMake(blockSize, 1, 1)
         
-        let enc = commandBuffer.computeCommandEncoder()
+        let enc = commandBuffer.makeComputeCommandEncoder()
         enc.pushDebugGroup("integral_image_scan")
         enc.setComputePipelineState(scanPipeline)
         
@@ -143,7 +148,7 @@ class IntegralImage : MPSKernel {
         enc.setBuffer(self.inclusiveBuffer, offset: 0, at: 0)
         
         // Create the threadgroup memory (times 4 because we use float4s)
-        enc.setThreadgroupMemoryLength(blockSize * sizeof(Float) * 4, at: 0)
+        enc.setThreadgroupMemoryLength(blockSize * MemoryLayout<Float>.size * 4, at: 0)
         
         enc.dispatchThreadgroups(scanGrid, threadsPerThreadgroup: scanBlock)
         enc.popDebugGroup()
@@ -155,7 +160,7 @@ class IntegralImage : MPSKernel {
         let blocks = input.width % blockSize == 0 ? max(input.width/blockSize,1) : input.width/blockSize+1
         let scanBlock = MTLSizeMake(blockSize, 1, 1)
         let scanGrid = MTLSizeMake(blocks, input.height, 1)
-        let enc = commandBuffer.computeCommandEncoder()
+        let enc = commandBuffer.makeComputeCommandEncoder()
         enc.pushDebugGroup("integral_image_fixup")
         enc.setComputePipelineState(fixupPipeline)
         enc.setTexture(input, at: 0)
@@ -197,16 +202,16 @@ class IntegralImage : MPSKernel {
         self.encodeScan(commandBuffer: commandBuffer, input: sourceTexture, aux: aux, output: intermediary)
         self.encodeScan(commandBuffer: commandBuffer, input: aux, aux: nil, output: auxScanned)
         self.encodeFixup(commandBuffer: commandBuffer, input: intermediary, aux: auxScanned, output: out)
-        self.transposePass.encode(to: commandBuffer, sourceTexture: out, destinationTexture: input_t)
+        self.transposePass.encode(commandBuffer: commandBuffer, sourceTexture: out, destinationTexture: input_t)
         self.encodeScan(commandBuffer: commandBuffer, input: input_t, aux: aux_t, output: intermediary_t)
         self.encodeScan(commandBuffer: commandBuffer, input: aux_t, aux: nil, output: auxScanned_t)
         self.encodeFixup(commandBuffer: commandBuffer, input: intermediary_t, aux: auxScanned_t, output: out_t)
-        self.transposePass.encode(to: commandBuffer, sourceTexture: out_t, destinationTexture: destinationTexture)
+        self.transposePass.encode(commandBuffer: commandBuffer, sourceTexture: out_t, destinationTexture: destinationTexture)
     }
     
     // Convenience function for testing
     func getBoxIntegral(_ commandBuffer: MTLCommandBuffer, integralImage: MTLTexture, row: Int, col: Int, rows: Int, cols: Int, output: MTLBuffer) {
-        let enc = commandBuffer.computeCommandEncoder()
+        let enc = commandBuffer.makeComputeCommandEncoder()
         enc.setComputePipelineState(boxintegralPipeline)
         enc.setTexture(integralImage, at: 0)
         enc.setBuffer(getBufferFromInt(row), offset: 0, at: 0)
@@ -222,17 +227,18 @@ class IntegralImage : MPSKernel {
     
     // Creates a MTLTexture from arguments
     private func createIntermediaryTexture(format: MTLPixelFormat, width: Int, height: Int) -> MTLTexture {
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(with: format, width: width, height: height, mipmapped: false)
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
         descriptor.resourceOptions = MTLResourceOptions.storageModeShared
         descriptor.storageMode = MTLStorageMode.shared
-        return device.newTexture(with: descriptor)
+        descriptor.usage = [MTLTextureUsage.renderTarget, MTLTextureUsage.shaderRead, MTLTextureUsage.shaderWrite]
+        return device.makeTexture(descriptor: descriptor)
     }
     
     // Creates a compute pipeline from a kernel name
     private func getPipeline(kernel: String) -> MTLComputePipelineState {
-        let kernelFunction = library.newFunction(withName: kernel)
+        let kernelFunction = library.makeFunction(name: kernel)
         do {
-            let pipeline = try device.newComputePipelineState(with: kernelFunction!)
+            let pipeline = try device.makeComputePipelineState(function: kernelFunction!)
             return pipeline
         }
         catch {
@@ -243,7 +249,7 @@ class IntegralImage : MPSKernel {
     // Returns a buffer from an integer
     private func getBufferFromInt(_ val: Int) -> MTLBuffer {
         var _v = val
-        return device.newBuffer(withBytes: &_v, length: sizeof(Int), options: .storageModeShared)
+        return device.makeBuffer(bytes: &_v, length: MemoryLayout<Int>.size, options: MTLResourceOptions.storageModeShared)
     }
     
     

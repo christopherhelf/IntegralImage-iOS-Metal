@@ -19,7 +19,7 @@ class TestClass {
     init() {
         device = MTLCreateSystemDefaultDevice()!;
         library = device.newDefaultLibrary()!;
-        commandQueue = device.newCommandQueue()
+        commandQueue = device.makeCommandQueue()
     }
     
     func testSmallTextureSum() -> Bool {
@@ -29,7 +29,7 @@ class TestClass {
         let (ii, input, output) = createTestSetup(width, height)
         let sum = TestClass.getBufferForFloat(device: device)
         
-        let commandBuffer = commandQueue.commandBuffer()
+        let commandBuffer = commandQueue.makeCommandBuffer()
         ii.encodeToCommandBuffer(commandBuffer, sourceTexture: input, destinationTexture: output)
         ii.getBoxIntegral(commandBuffer, integralImage: output, row: 0, col: 0, rows: n, cols: n, output: sum)
         commandBuffer.commit()
@@ -39,6 +39,7 @@ class TestClass {
     }
     
     func testMPS() -> Bool {
+        print("testMPS")
         
         let mps = MPSImageIntegral(device: device)
         mps.offset = MPSOffset(x: 0, y: 0, z: 0)
@@ -47,8 +48,8 @@ class TestClass {
         
         var elapsedGPU : UInt64 = 0
         for _ in 0..<n {
-            let commandBuffer = commandQueue.commandBuffer()
-            mps.encode(to: commandBuffer, sourceTexture: input, destinationTexture: output)
+            let commandBuffer = commandQueue.makeCommandBuffer()
+            mps.encode(commandBuffer: commandBuffer, sourceTexture: input, destinationTexture: output)
             let _t1 = mach_absolute_time()
             commandBuffer.commit()
             commandBuffer.waitUntilCompleted()
@@ -79,8 +80,8 @@ class TestClass {
         let (ii, _, output1) = createTestSetup(width, height)
         let (_, _, output2) = createTestSetup(width, height)
         
-        let commandBuffer = commandQueue.commandBuffer()
-        mps.encode(to: commandBuffer, sourceTexture: input, destinationTexture: output1)
+        let commandBuffer = commandQueue.makeCommandBuffer()
+        mps.encode(commandBuffer: commandBuffer, sourceTexture: input, destinationTexture: output1)
         ii.encodeToCommandBuffer(commandBuffer, sourceTexture: input, destinationTexture: output2)
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
@@ -107,8 +108,8 @@ class TestClass {
         let (ii, _, output1) = createTestSetup(width, height)
         let (_, _, output2) = createTestSetup(width, height)
         
-        let commandBuffer = commandQueue.commandBuffer()
-        mps.encode(to: commandBuffer, sourceTexture: input, destinationTexture: output1)
+        let commandBuffer = commandQueue.makeCommandBuffer()
+        mps.encode(commandBuffer: commandBuffer, sourceTexture: input, destinationTexture: output1)
         ii.encodeToCommandBuffer(commandBuffer, sourceTexture: input, destinationTexture: output2)
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
@@ -130,13 +131,14 @@ class TestClass {
     
     
     func testTimes720p() -> Bool {
+        print("testTimes720p")
         
         let n = 1000
         let (ii, input, output) = createTestSetup(1280, 720)
         
         var elapsedGPU : UInt64 = 0
         for _ in 0..<n {
-            let commandBuffer = commandQueue.commandBuffer()
+            let commandBuffer = commandQueue.makeCommandBuffer()
             ii.encodeToCommandBuffer(commandBuffer, sourceTexture: input, destinationTexture: output)
             let _t1 = mach_absolute_time()
             commandBuffer.commit()
@@ -157,13 +159,14 @@ class TestClass {
     }
     
     func testTimes1080p() -> Bool {
+        print("testTimes1080p")
         
         let n = 1000
         let (ii, input, output) = createTestSetup(1920, 1080)
         
         var elapsedGPU : UInt64 = 0
         for _ in 0..<n {
-            let commandBuffer = commandQueue.commandBuffer()
+            let commandBuffer = commandQueue.makeCommandBuffer()
             ii.encodeToCommandBuffer(commandBuffer, sourceTexture: input, destinationTexture: output)
             let _t1 = mach_absolute_time()
             commandBuffer.commit()
@@ -199,7 +202,7 @@ class TestClass {
     }
     
     class func printTexture(texture: MTLTexture, displayBlockSize: Bool = true, blockSize: Int = 64) {
-        let bytesPerRow = texture.width*sizeof(Float)
+        let bytesPerRow = texture.width*MemoryLayout<Float>.size
         let region = MTLRegionMake2D(0, 0, texture.width, texture.height)
         var vals = [Float](repeatElement(0.0, count: texture.width*texture.height))
         texture.getBytes(&vals, bytesPerRow: bytesPerRow, from: region, mipmapLevel: 0)
@@ -239,17 +242,17 @@ class TestClass {
     }
     
     class func createTexture(device: MTLDevice, format: MTLPixelFormat, width: Int, height: Int, bytes: [Float]) -> MTLTexture {
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(with: format, width: width, height: height, mipmapped: false)
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
         descriptor.resourceOptions = MTLResourceOptions.storageModeShared
         descriptor.storageMode = MTLStorageMode.shared
-        
-        let t = device.newTexture(with: descriptor)
-        t.replace(MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: bytes, bytesPerRow: width*4)
+        descriptor.usage = [MTLTextureUsage.renderTarget, MTLTextureUsage.shaderRead, MTLTextureUsage.shaderWrite]
+        let t = device.makeTexture(descriptor: descriptor)
+        t.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: bytes, bytesPerRow: width*4)
         return t
     }
     
     class func textureToArray(texture: MTLTexture) -> [Float] {
-        let bytesPerRow = texture.width*sizeof(Float)
+        let bytesPerRow = texture.width*MemoryLayout<Float>.size
         let region = MTLRegionMake2D(0, 0, texture.width, texture.height)
         var vals = [Float](repeatElement(0.0, count: texture.width*texture.height))
         texture.getBytes(&vals, bytesPerRow: bytesPerRow, from: region, mipmapLevel: 0)
@@ -257,14 +260,14 @@ class TestClass {
     }
     
     class func getBufferForFloat(device: MTLDevice) -> MTLBuffer {
-        return device.newBuffer(withLength: sizeof(Float), options: MTLResourceOptions.storageModeShared)
+        return device.makeBuffer(length: MemoryLayout<Float>.size, options: MTLResourceOptions.storageModeShared)
     }
     
     class func floatBufferToFloat(_ buffer: MTLBuffer) -> Float {
         let data = NSData(bytesNoCopy: buffer.contents(),
-                          length: sizeof(Float), freeWhenDone: false)
+                          length: MemoryLayout<Float>.size, freeWhenDone: false)
         var rtn : Float = -1.0
-        data.getBytes(&rtn, length:sizeof(Float))
+        data.getBytes(&rtn, length:MemoryLayout<Float>.size)
         return rtn
     }
     
